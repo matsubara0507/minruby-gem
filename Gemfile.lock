@@ -1,0 +1,22 @@
+PATH
+  remote: .
+  specs:
+    minruby (1.0.4)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    minitest (5.11.3)
+    rake (12.3.2)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  bundler (~> 2.1.0.pre.1)
+  minitest
+  minruby!
+  rake (~> 12.3.2)
+
+BUNDLED WITH
+   2.1.0.pre.1
