@@ -11,144 +11,111 @@ class MinRubyParser
   end
 
   def simplify(exp)
-    case exp[0]
-    when :program, :bodystmt
-      make_stmts(exp[1])
-    when :def
-      name = exp[1][1]
-      params = exp[2]
+    case exp
+    in (:program | :bodystmt), exp1, *_
+      make_stmts(exp1)
+    in :def, [_, name, _], params, body
       params = params[1] if params[0] == :paren
       params = (params[1] || []).map {|a| a[1] }
-      body = simplify(exp[3])
-      ["func_def", name, params, body]
-    when :call
-      recv = simplify(exp[1])
-      name = exp[3][1]
-      ["method_call", recv, name, []]
-    when :fcall
-      name = exp[1][1]
+      ["func_def", name, params, simplify(body)]
+    in :call, recv, _, [_, name, _]
+      ["method_call", simplify(recv), name, []]
+    in :fcall, [_, name, _]
       ["func_call", name]
-    when :method_add_arg
-      call = simplify(exp[1])
-      e = exp[2]
+    in :method_add_arg, exp1, exp2
+      call = simplify(exp1)
+      e = exp2
       e = e[1] || [] if e[0] == :arg_paren
       e = e[1] || [] if e[0] == :args_add_block
       e = e.map {|e_| simplify(e_) }
       call[(call[0] == "func_call" ? 2 : 3)..-1] = e
       call
-    when :command
-      name = exp[1][1]
-      args = exp[2][1].map {|e_| simplify(e_) }
-      ["func_call", name, *args]
-    when :if, :elsif
-      cond_exp = simplify(exp[1])
-      then_exp = make_stmts(exp[2])
-      if exp[3]
-        if exp[3][0] == :elsif
-          else_exp = simplify(exp[3])
+    in :command, [_, name, _], [_, args, *_]
+      ["func_call", name, *(args.map {|e_| simplify(e_) })]
+    in (:if | :elsif), cond_exp, then_exp, *rest
+      if rest[0]
+        if rest[0][0] == :elsif
+          else_exp = simplify(rest[0])
         else
-          else_exp = make_stmts(exp[3][1])
+          else_exp = make_stmts(rest[0][1])
         end
       end
-      ["if", cond_exp, then_exp, else_exp]
-    when :ifop
-      cond_exp = simplify(exp[1])
-      then_exp = simplify(exp[2])
-      else_exp = simplify(exp[3])
-      ["if", cond_exp, then_exp, else_exp]
-    when :if_mod
-      cond_exp = simplify(exp[1])
-      then_exp = make_stmts([exp[2]])
-      ["if", cond_exp, then_exp, nil]
-    when :while
-      cond_exp = simplify(exp[1])
-      body_exp = make_stmts(exp[2])
-      ["while", cond_exp, body_exp]
-    when :while_mod
-      cond_exp = simplify(exp[1])
-      body_exp = make_stmts(exp[2][1][1])
-      ["while2", cond_exp, body_exp]
-    when :binary
-      exp1 = simplify(exp[1])
-      op = exp[2]
-      exp2 = simplify(exp[3])
-      [op.to_s, exp1, exp2]
-    when :var_ref
-      case exp[1][0]
-      when :@kw
-        case exp[1][1]
-        when "nil" then ["lit", nil]
-        when "true" then ["lit", true]
-        when "false" then ["lit", false]
-        else
-          raise
-        end
-      when :@ident
-        ["var_ref", exp[1][1]]
-      when :@const
-        ["const_ref", exp[1][1]]
-      end
-    when :@int
-      ["lit", exp[1].to_i]
-    when :unary
-      v = simplify(exp[2])
+      ["if", simplify(cond_exp), make_stmts(then_exp), else_exp]
+    in :ifop, cond_exp, then_exp, else_exp
+      ["if", simplify(cond_exp), simplify(then_exp), simplify(else_exp)]
+    in :if_mod, cond_exp, then_exp
+      ["if", simplify(cond_exp), make_stmts([then_exp]), nil]
+    in :while, cond_exp, body_exp
+      ["while", simplify(cond_exp), make_stmts(body_exp)]
+    in :while_mod, cond_exp, [_, [_, body_exp, *_]]
+      ["while2", simplify(cond_exp), make_stmts(body_exp)]
+    in :binary, exp1, op, exp2
+      [op.to_s, simplify(exp1), simplify(exp2)]
+    in :var_ref, [:@kw, "nil", _]
+      ["lit", nil]
+    in :var_ref, [:@kw, "true", _]
+      ["lit", true]
+    in :var_ref, [:@kw, "false", _]
+      ["lit", false]
+    in :var_ref, [:@ident, name, _]
+      ["var_ref", name]
+    in :var_ref, [:@const, name, _]
+      ["const_ref", name]
+    in :@int, num, _
+      ["lit", num.to_i]
+    in :unary, _, value
+      v = simplify(value)
       raise if v[0] != "lit"
       ["lit", -v[1]]
-    when :string_literal
-      ["lit", exp[1][1] ? exp[1][1][1] : ""]
-    when :symbol_literal
-      ["lit", exp[1][1][1].to_sym]
-    when :assign
-      case exp[1][0]
-      when :var_field
-        ["var_assign", exp[1][1][1], simplify(exp[2])]
-      when :aref_field
-        ["ary_assign", simplify(exp[1][1]), simplify(exp[1][2][1][0]), simplify(exp[2])]
-      else
-        raise
-      end
-    when :case
-      arg = simplify(exp[1])
+    in :string_literal, [_, value]
+      ["lit", value ? value[1] : ""]
+    in :symbol_literal, [_, [_, sym]]
+      ["lit", sym.to_sym]
+    in :assign, [:var_field, [_, name, _]], exp1
+      ["var_assign", name, simplify(exp1)]
+    in :assign, [:aref_field, ary, [_, [idx], *_]], exp1
+      ["ary_assign", simplify(ary), simplify(idx), simplify(exp1)]
+    in :case, arg, exp1, exp2
       when_clauses = []
-      exp = exp[2]
+      exp = exp1
       while exp && exp[0] == :when
-        pat = exp[1].map {|e_| simplify(e_) }
-        when_clauses << [pat, make_stmts(exp[2])]
-        exp = exp[3]
+        pat = arg.map {|e_| simplify(e_) }
+        when_clauses << [pat, make_stmts(exp1)]
+        exp = exp2
       end
-      else_clause = make_stmts(exp[1]) if exp
+      else_clause = make_stmts(arg) if exp
       #["case", arg, when_clauses, else_clause]
 
       exp = else_clause
       when_clauses.reverse_each do |patterns, stmts|
         patterns.each do |pattern|
-          exp = ["if", ["==", arg, pattern], stmts, exp]
+          exp = ["if", ["==", simplify(arg), pattern], stmts, exp]
         end
       end
       exp
-    when :method_add_block
-      call = simplify(exp[1])
-      blk_params = exp[2][1][1][1].map {|a| a[1] }
-      blk_body = exp[2][2].map {|e_| simplify(e_) }
+    in :method_add_block, method, [_, params, body]
+      call = simplify(method)
+      blk_params = params[1][1].map {|a| a[1] }
+      blk_body = body.map {|e_| simplify(e_) }
       call << blk_params << blk_body
-    when :aref
-      ["ary_ref", simplify(exp[1]), *exp[2][1].map {|e_| simplify(e_) }]
-    when :array
-      ["ary_new", *(exp[1] ? exp[1].map {|e_| simplify(e_) } : [])]
-    when :hash
+    in :aref, ary, [_, idxs, *_]
+      ["ary_ref", simplify(ary), *idxs.map {|e_| simplify(e_) }]
+    in :array, exp1
+      ["ary_new", *(exp1 ? exp1.map {|e_| simplify(e_) } : [])]
+    in [:hash]
+      ["hash_new"]
+    in :hash, [_, key_values]
       kvs = ["hash_new"]
-      if exp[1]
-        exp[1][1].each do |e_|
-          key = simplify(e_[1])
-          val = simplify(e_[2])
-          kvs << key << val
-        end
+      key_values.each do |e_|
+        key = simplify(e_[1])
+        val = simplify(e_[2])
+        kvs << key << val
       end
       kvs
-    when :void_stmt
+    in [:void_stmt]
       ["lit", nil]
-    when :paren
-      simplify(exp[1][0])
+    in :paren, exp1
+      simplify(exp1[0])
     else
       pp exp
       raise "unsupported node: #{ exp[0] }"
